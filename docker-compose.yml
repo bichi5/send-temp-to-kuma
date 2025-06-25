@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  kuma-temp-pusher:
+    build: .
+    container_name: kuma-temp-pusher
+    restart: always
+    env_file:
+      - .env
