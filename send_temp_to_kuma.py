@@ -1,43 +1,48 @@
-import requests
-from bs4 import BeautifulSoup
-import re
 import os
+import subprocess
+import re
+from dotenv import load_dotenv
+import requests
 
-SOURCE_URL = os.getenv("SOURCE_URL")
+load_dotenv("/app/.env")
+
 KUMA_PUSH_URL = os.getenv("KUMA_PUSH_URL")
-SENSOR_ID = os.getenv("SENSOR_ID")
+SNMP_HOST = os.getenv("SNMP_HOST")
+SNMP_COMMUNITY = os.getenv("SNMP_COMMUNITY")
+SNMP_OID = os.getenv("SNMP_OID")
 
-def extract_temperature(html, sensor_id):
-    soup = BeautifulSoup(html, 'html.parser')
-    temp_div = soup.find('div', {'class': 'value', 'id': sensor_id})
-    if temp_div:
-        match = re.search(r"([\d\.]+)", temp_div.text)
+def get_temperature():
+    try:
+        result = subprocess.run(
+            ["snmpget", "-v", "2c", "-c", SNMP_COMMUNITY, SNMP_HOST, SNMP_OID],
+            capture_output=True, text=True, timeout=10
+        )
+        match = re.search(r'STRING:\s+"([\d.]+)"', result.stdout)
         if match:
             return float(match.group(1))
+    except Exception as e:
+        print(f"Error ejecutando SNMP: {e}")
     return None
 
 def main():
-    if not SOURCE_URL or not KUMA_PUSH_URL or not SENSOR_ID:
+    if not (KUMA_PUSH_URL and SNMP_HOST and SNMP_COMMUNITY and SNMP_OID):
         print("Error: Variables de entorno no definidas.")
         return
 
-    try:
-        res = requests.get(SOURCE_URL, timeout=10)
-        res.raise_for_status()
-        temp = extract_temperature(res.text, SENSOR_ID)
-
-        if temp is not None:
-            payload = {
-                'status': 'up',
-                'msg': f'Temperatura_CPD_{SENSOR_ID}__{temp}°C'
-            }
-            kuma_res = requests.get(KUMA_PUSH_URL, params=payload, timeout=5)
-            kuma_res.raise_for_status()
-            print(f"{SENSOR_ID} enviada: {temp}°C")
-        else:
-            print(f"No se pudo extraer la temperatura del sensor {SENSOR_ID}.")
-    except Exception as e:
-        print(f"Error: {e}")
+    temp = get_temperature()
+    if temp is not None:
+        payload = {
+            "status": "up",
+            "msg": f"Temperatura CDC: {temp}°C"
+        }
+        try:
+            res = requests.get(KUMA_PUSH_URL, params=payload, timeout=5)
+            res.raise_for_status()
+            print(f"Temperatura enviada: {temp}°C")
+        except Exception as e:
+            print(f"Error enviando a Kuma: {e}")
+    else:
+        print("No se pudo obtener la temperatura por SNMP.")
 
 if __name__ == "__main__":
     main()
